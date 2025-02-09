@@ -46,11 +46,104 @@ async function run() {
       .db("GroSkill")
       .collection("videoProgress");
 
+    const userStore = client.db("GroSkill").collection("users");
+
+    app.post("/registerUser", async (req, res) => {
+      const { email, userName, userRole, photoUrl } = req.body;
+      const existingUser = await userStore.findOne({ email });
+
+      if (existingUser) {
+        return res.status(400).send({ message: "User already exists" });
+      }
+
+      const newUser = { email, userName, userRole, photoUrl };
+      const logInUser = await userStore.insertOne(newUser);
+      res.send(logInUser);
+    });
+
+    app.post("/googleUser", async (req, res) => {
+      const { email, userName } = req.body;
+      const existingUser = await userStore.findOne({ email });
+
+      if (existingUser) {
+        return res.send({ message: "Google user already exists" });
+      }
+
+      const newUser = { email, userName };
+      const logInUser = await userStore.insertOne(newUser);
+      res.send(logInUser);
+    });
+
+    app.get("/user", async (req, res) => {
+      const getUser = await userStore.find().toArray();
+      res.send(getUser);
+    });
+
+    //course
+    app.post("/addCourses", async (req, res) => {
+      try {
+        const { courseName, instructor, price, image, category, review } =
+          req.body;
+
+        if (!courseName || !instructor || !price || !image || !category) {
+          return res.status(400).json({ message: "All fields are required" });
+        }
+
+        const newCourse = {
+          courseName,
+          instructor,
+          price: parseFloat(price), // Ensure price is stored as a number
+          image,
+          category,
+          review: review || 4.8, // Default review to 4.8 if not provided
+        };
+
+        const addingCourses = await collectionOfGroSkill.insertOne(newCourse);
+        res
+          .status(201)
+          .json({ message: "Course added successfully", data: addingCourses });
+      } catch (error) {
+        console.error("Error adding course:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
     app.get("/courses", async (req, res) => {
       const allCourses = await collectionOfGroSkill.find().toArray();
       res.send(allCourses);
     });
 
+    // Update Course (PATCH)
+    app.patch("/updateCourse/:id", async (req, res) => {
+      const courseId = req.params.id;
+      const updateFields = req.body;
+    
+      try {
+        const result = await collectionOfGroSkill.updateOne(
+          { _id: new ObjectId(courseId) }, // Ensure ObjectId is used
+          { $set: updateFields }
+        );
+    
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Course not found" });
+        }
+    
+        res.send({ message: "Course updated successfully" });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    // Delete Course (DELETE)
+    app.delete('/deleteCourse/:id', async (req, res) => {
+      const { id } = req.params;
+    
+      const result = await collectionOfGroSkill.deleteOne({_id:new ObjectId(id)});
+      res.send(result)
+    });
+
+    //
     app.post("/addToCart", async (req, res) => {
       const { email, course } = req.body;
 
@@ -69,8 +162,9 @@ async function run() {
       }
     });
 
-    app.get("/cartItem", async (req, res) => {
-      const result = await cartCollection.find().toArray();
+    app.get("/cartItem/:email", async (req, res) => {
+      const email = req.params.email;
+      const result = await cartCollection.find({ email: email }).toArray();
       res.send(result);
     });
 

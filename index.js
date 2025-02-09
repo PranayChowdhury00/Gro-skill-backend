@@ -47,6 +47,7 @@ async function run() {
       .collection("videoProgress");
 
     const userStore = client.db("GroSkill").collection("users");
+    const storeComment = client.db("GroSkill").collection("comments");
 
     app.post("/registerUser", async (req, res) => {
       const { email, userName, userRole, photoUrl } = req.body;
@@ -274,6 +275,42 @@ async function run() {
         res.status(500).send({ message: "Error fetching video progress" });
       }
     });
+
+    //update user role
+    app.patch('/makeAdmin/:id', async (req, res) => {
+      const userId = req.params.id;
+      const { userRole } = req.body;
+    
+      try {
+        const result = await userStore.updateOne(
+          { _id: new ObjectId(userId) },  // Find the user by ID
+          { $set: { userRole: userRole } } // Update the userRole field
+        );
+    
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: 'User not found' });
+        }
+    
+        res.send({ message: 'User role updated successfully', result });
+      } catch (error) {
+        console.error("Error updating user role:", error);
+        res.status(500).send({ message: 'Error updating user role', error: error.message });
+      }
+    });
+    
+
+    app.delete('/deleteUser/:id',async(req,res)=>{
+      const id=req.params.id;
+      const result = await userStore.deleteOne({_id:new ObjectId(id)});
+      res.send(result)
+    })
+
+    //comments
+    
+
+
+
+
 
     await client.db("admin").command({ ping: 1 });
     console.log(

@@ -4,6 +4,7 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 require("dotenv").config();
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 
@@ -36,9 +37,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
-    // await client.connect();
-    // Send a ping to confirm a successful connection
+    
 
     const collectionOfGroSkill = client.db("GroSkill").collection("Courses");
     const cartCollection = client.db("GroSkill").collection("cart");
@@ -48,7 +47,72 @@ async function run() {
 
     const userStore = client.db("GroSkill").collection("users");
     const storeComment = client.db("GroSkill").collection("comments");
+    const storeInstructors = client.db("GroSkill").collection("instructors");
+    const storePayments = client.db("GroSkill").collection("payment");
+    const reviewsCollection = client.db("GroSkill").collection("reviews");
 
+    // Stripe Payment Route
+    app.post("/create-payment-intent", async (req, res) => {
+      try {
+        const { price } = req.body;
+    
+        if (!price || isNaN(price) || price <= 0) {
+          return res.status(400).send({ error: "Invalid price value" });
+        }
+    
+        const amount = parseInt(price * 100);
+        
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount,
+          currency: "usd",
+          payment_method_types: ["card"],
+        });
+    
+        res.send({
+          clientSecret: paymentIntent.client_secret,
+        });
+      } catch (err) {
+        console.error("Error creating payment intent:", err);
+        res.status(500).send({ error: "Failed to create payment intent" });
+      }
+    });
+    
+
+  app.post("/save-payment", async (req, res) => {
+  try {
+    const paymentData = req.body;
+    console.log(paymentData)
+    const result = await storePayments.insertOne(paymentData);
+    res.status(201).json({ message: "Payment saved successfully", result });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to save payment" });
+  }
+  });
+
+  app.get('/payment/:email', async (req, res) => {
+    const query = { email: req.params.email };
+    try {
+        // Use find() if expecting multiple documents
+        const result = await storePayments.find(query).toArray(); 
+        res.send(result);
+    } catch (error) {
+        console.error("Error fetching payment data:", error);
+        res.status(500).send({ error: "Failed to fetch payment data" });
+    }
+});
+  app.get('/allPayment', async (req, res) => {
+    try {
+        // Use find() if expecting multiple documents
+        const result = await storePayments.find().toArray(); 
+        res.send(result);
+    } catch (error) {
+        console.error("Error fetching payment data:", error);
+        res.status(500).send({ error: "Failed to fetch payment data" });
+    }
+});
+
+
+    //save user in db
     app.post("/registerUser", async (req, res) => {
       const { email, userName, userRole, photoUrl } = req.body;
       const existingUser = await userStore.findOne({ email });
@@ -78,6 +142,21 @@ async function run() {
     app.get("/user", async (req, res) => {
       const getUser = await userStore.find().toArray();
       res.send(getUser);
+    });
+    app.get("/user/:email", async (req, res) => {
+      const email = req.params.email;
+      const getUser = await userStore.find({email:email}).toArray();
+      res.send(getUser);
+    });
+
+    app.patch("/user/:email",async(req,res)=>{
+      const email = req.params.email;
+      const updatedUser=req.body;
+      const result = await userStore.updateOne(
+        {email:email},
+        {$set:updatedUser}
+      )
+      res.send(result);
     });
 
     //course
@@ -168,6 +247,19 @@ async function run() {
       const result = await cartCollection.find({ email: email }).toArray();
       res.send(result);
     });
+
+    // Backend: Route to remove cart items after payment
+app.post("/remove-cart-items", async (req, res) => {
+  try {
+    const { email } = req.body; // Get the email of the user
+    const result = await cartCollection.deleteMany({ email }); // Delete all cart items for the user
+
+    res.status(200).json({ message: "Cart items removed successfully", result });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to remove cart items" });
+  }
+});
+
 
     app.delete("/deleteCart", async (req, res) => {
       const { id } = req.body;
@@ -306,8 +398,108 @@ async function run() {
     })
 
     //comments
-    
+    app.post('/doComment',async(req,res)=>{
+      const {comment,email,name}=req.body;
+      const data={comment,email,name};
+      const result = await storeComment.insertOne(data);
+      res.send(result)
+    })
 
+    app.get('/getComment', async (req, res) => {
+  const page = parseInt(req.query.page) || 1; // Default page = 1
+  const limit = parseInt(req.query.limit) || 5; // Default limit = 5 comments
+  const skip = (page - 1) * limit;
+
+  try {
+    const comments = await storeComment.find().skip(skip).limit(limit).toArray();
+    const totalComments = await storeComment.countDocuments();
+    res.send({ comments, totalComments });
+  } catch (error) {
+    res.status(500).send({ error: error.message });
+  }
+});
+
+//get all the storeInstructors
+
+app.post("/applyInstructor", async (req, res) => {
+  try {
+    const instructorData = req.body;
+    const result = await storeInstructors.insertOne(instructorData);
+    if (result.acknowledged) {
+      res.status(201).json({ success: true, message: "Application submitted successfully" });
+    } else {
+      res.status(400).json({ success: false, message: "Failed to submit application" });
+    }
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+app.get('/getInstructor',async(req,res)=>{
+  const result = await storeInstructors.find().toArray();
+  res.send(result)
+})
+app.delete('/deleteInstructorRequest/:id',async(req,res)=>{
+  const id = req.params.id;
+  const result = await storeInstructors.deleteOne({_id:new ObjectId(id)});
+  res.send(result);
+})
+app.patch('/updateTheUsrRole/:id', async (req, res) => {
+  const id = req.params.id;
+  const { status } = req.body;
+  
+  try {
+    const result = await usersCollection.updateOne(
+      { _id: new ObjectId(id) }, 
+      { $set: { status: status } } // Ensure "status" field updates
+    );
+
+    if (result.modifiedCount > 0) {
+      res.json({ success: true, message: "User role updated successfully!" });
+    } else {
+      res.json({ success: false, message: "No changes made!" });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error", error });
+  }
+});
+
+//add review
+app.post('/review', async (req, res) => {
+  const { rating, reviewText, userEmail, userName } = req.body;
+
+  // Validate rating
+  if (rating < 1 || rating > 5) {
+    return res.status(400).json({ success: false, message: 'Invalid rating. Rating must be between 1 and 5.' });
+  }
+
+  // Validate reviewText (optional)
+  if (!reviewText.trim()) {
+    return res.status(400).json({ success: false, message: 'Review text cannot be empty.' });
+  }
+
+  const newReview = {
+    rating,
+    reviewText,
+    userEmail,
+    userName,
+    createdAt: new Date(),
+  };
+
+  try {
+    const result = await reviewsCollection.insertOne(newReview);
+    res.status(201).json({ success: true, message: 'Review added successfully.' });
+  } catch (error) {
+    console.error('Error adding review:', error);
+    res.status(500).json({ success: false, message: 'Failed to add review. Please try again later.' });
+  }
+});
+
+// Route to get all reviews for a specific course
+app.get('/review',async(req,res)=>{
+  const result= await reviewsCollection.find().toArray();
+  res.send(result)
+})
 
 
 
